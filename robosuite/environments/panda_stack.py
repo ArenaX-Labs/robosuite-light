@@ -2,22 +2,22 @@ from collections import OrderedDict
 import numpy as np
 
 from robosuite.utils.transform_utils import convert_quat
-from robosuite.environments.sawyer import SawyerEnv
+from robosuite.environments.panda import PandaEnv
 
-from robosuite.models.arenas import TableArena
+from robosuite.models.arenas.table_arena import TableArena
 from robosuite.models.objects import BoxObject
-from robosuite.models.robots import Sawyer
+from robosuite.models.robots import Panda
 from robosuite.models.tasks import TableTopTask, UniformRandomSampler
 
 
-class SawyerLift(SawyerEnv):
+class PandaStack(PandaEnv):
     """
-    This class corresponds to the lifting task for the Sawyer robot arm.
+    This class corresponds to the stacking task for the Panda robot arm.
     """
 
     def __init__(
         self,
-        gripper_type="TwoFingerGripper",
+        gripper_type="PandaGripper",
         table_full_size=(0.8, 0.8, 0.8),
         table_friction=(1., 5e-3, 1e-4),
         use_camera_obs=True,
@@ -100,19 +100,19 @@ class SawyerLift(SawyerEnv):
         self.table_full_size = table_full_size
         self.table_friction = table_friction
 
+        # whether to show visual aid about where is the gripper
+        self.gripper_visualization = gripper_visualization
+
         # whether to use ground-truth object states
         self.use_object_obs = use_object_obs
-
-        # reward configuration
-        self.reward_shaping = reward_shaping
 
         # object placement initializer
         if placement_initializer:
             self.placement_initializer = placement_initializer
         else:
             self.placement_initializer = UniformRandomSampler(
-                x_range=[-0.03, 0.03],
-                y_range=[-0.03, 0.03],
+                x_range=[-0.08, 0.08],
+                y_range=[-0.08, 0.08],
                 ensure_object_boundary_in_range=False,
                 z_rotation=True,
             )
@@ -135,6 +135,25 @@ class SawyerLift(SawyerEnv):
             camera_depth=camera_depth,
         )
 
+        # reward configuration
+        self.reward_shaping = reward_shaping
+
+        # information of objects
+        # self.object_names = [o['object_name'] for o in self.object_metadata]
+        self.object_names = list(self.mujoco_objects.keys())
+        self.object_site_ids = [
+            self.sim.model.site_name2id(ob_name) for ob_name in self.object_names
+        ]
+
+        # id of grippers for contact checking
+        self.finger_names = self.gripper.contact_geoms()
+
+        # self.sim.data.contact # list, geom1, geom2
+        self.collision_check_geom_names = self.sim.model._geom_name2id.keys()
+        self.collision_check_geom_ids = [
+            self.sim.model._geom_name2id[k] for k in self.collision_check_geom_names
+        ]
+
     def _load_model(self):
         """
         Loads an xml model, puts it in self.model
@@ -149,16 +168,20 @@ class SawyerLift(SawyerEnv):
         if self.use_indicator_object:
             self.mujoco_arena.add_pos_indicator()
 
-        # The sawyer robot has a pedestal, we want to align it with the table
+        # The panda robot has a pedestal, we want to align it with the table
         self.mujoco_arena.set_origin([0.16 + self.table_full_size[0] / 2, 0, 0])
 
         # initialize objects of interest
-        cube = BoxObject(
-            size_min=[0.020, 0.020, 0.020],  # [0.015, 0.015, 0.015],
-            size_max=[0.022, 0.022, 0.022],  # [0.018, 0.018, 0.018])
-            rgba=[1, 0, 0, 1],
+        cubeA = BoxObject(
+            size_min=[0.02, 0.02, 0.02], size_max=[0.02, 0.02, 0.02], rgba=[1, 0, 0, 1]
         )
-        self.mujoco_objects = OrderedDict([("cube", cube)])
+        cubeB = BoxObject(
+            size_min=[0.025, 0.025, 0.025],
+            size_max=[0.025, 0.025, 0.025],
+            rgba=[0, 1, 0, 1],
+        )
+        self.mujoco_objects = OrderedDict([("cubeA", cubeA), ("cubeB", cubeB)])
+        self.n_objects = len(self.mujoco_objects)
 
         # task includes arena, robot, and objects of interest
         self.model = TableTopTask(
@@ -176,14 +199,16 @@ class SawyerLift(SawyerEnv):
         in a flatten array, which is how MuJoCo stores physical simulation data.
         """
         super()._get_reference()
-        self.cube_body_id = self.sim.model.body_name2id("cube")
+        self.cubeA_body_id = self.sim.model.body_name2id("cubeA")
+        self.cubeB_body_id = self.sim.model.body_name2id("cubeB")
         self.l_finger_geom_ids = [
             self.sim.model.geom_name2id(x) for x in self.gripper.left_finger_geoms
         ]
         self.r_finger_geom_ids = [
             self.sim.model.geom_name2id(x) for x in self.gripper.right_finger_geoms
         ]
-        self.cube_geom_id = self.sim.model.geom_name2id("cube")
+        self.cubeA_geom_id = self.sim.model.geom_name2id("cubeA")
+        self.cubeB_geom_id = self.sim.model.geom_name2id("cubeB")
 
     def _reset_internal(self):
         """
@@ -195,21 +220,24 @@ class SawyerLift(SawyerEnv):
         self.model.place_objects()
 
         # reset joint positions
-        init_pos = np.array([-0.5538, -0.8208, 0.4155, 1.8409, -0.4955, 0.6482, 1.9628])
+        init_pos = self.mujoco_robot.init_qpos
         init_pos += np.random.randn(init_pos.shape[0]) * 0.02
         self.sim.data.qpos[self._ref_joint_pos_indexes] = np.array(init_pos)
 
-    def reward(self, action=None):
+    def reward(self, action):
         """
         Reward function for the task.
 
-        The dense reward has three components.
+        The dense reward has five components.
 
             Reaching: in [0, 1], to encourage the arm to reach the cube
             Grasping: in {0, 0.25}, non-zero if arm is grasping the cube
             Lifting: in {0, 1}, non-zero if arm has lifted the cube
+            Aligning: in [0, 0.5], encourages aligning one cube over the other
+            Stacking: in {0, 2}, non-zero if cube is stacked on other cube
 
-        The sparse reward only consists of the lifting component.
+        The sparse reward only consists of the stacking component.
+        However, the sparse reward is either 0 or 1.
 
         Args:
             action (np array): unused for this task
@@ -217,39 +245,77 @@ class SawyerLift(SawyerEnv):
         Returns:
             reward (float): the reward
         """
-        reward = 0.
-
-        # sparse completion reward
-        if self._check_success():
-            reward = 1.0
-
-        # use a shaping reward
+        r_reach, r_lift, r_stack = self.staged_rewards()
         if self.reward_shaping:
-
-            # reaching reward
-            cube_pos = self.sim.data.body_xpos[self.cube_body_id]
-            gripper_site_pos = self.sim.data.site_xpos[self.eef_site_id]
-            dist = np.linalg.norm(gripper_site_pos - cube_pos)
-            reaching_reward = 1 - np.tanh(10.0 * dist)
-            reward += reaching_reward
-
-            # grasping reward
-            touch_left_finger = False
-            touch_right_finger = False
-            for i in range(self.sim.data.ncon):
-                c = self.sim.data.contact[i]
-                if c.geom1 in self.l_finger_geom_ids and c.geom2 == self.cube_geom_id:
-                    touch_left_finger = True
-                if c.geom1 == self.cube_geom_id and c.geom2 in self.l_finger_geom_ids:
-                    touch_left_finger = True
-                if c.geom1 in self.r_finger_geom_ids and c.geom2 == self.cube_geom_id:
-                    touch_right_finger = True
-                if c.geom1 == self.cube_geom_id and c.geom2 in self.r_finger_geom_ids:
-                    touch_right_finger = True
-            if touch_left_finger and touch_right_finger:
-                reward += 0.25
+            reward = max(r_reach, r_lift, r_stack)
+        else:
+            reward = 1.0 if r_stack > 0 else 0.0
 
         return reward
+
+    def staged_rewards(self):
+        """
+        Helper function to return staged rewards based on current physical states.
+
+        Returns:
+            r_reach (float): reward for reaching and grasping
+            r_lift (float): reward for lifting and aligning
+            r_stack (float): reward for stacking
+        """
+        # reaching is successful when the gripper site is close to
+        # the center of the cube
+        cubeA_pos = self.sim.data.body_xpos[self.cubeA_body_id]
+        cubeB_pos = self.sim.data.body_xpos[self.cubeB_body_id]
+        gripper_site_pos = self.sim.data.site_xpos[self.eef_site_id]
+        dist = np.linalg.norm(gripper_site_pos - cubeA_pos)
+        r_reach = (1 - np.tanh(10.0 * dist)) * 0.25
+
+        # collision checking
+        touch_left_finger = False
+        touch_right_finger = False
+        touch_cubeA_cubeB = False
+
+        for i in range(self.sim.data.ncon):
+            c = self.sim.data.contact[i]
+            if c.geom1 in self.l_finger_geom_ids and c.geom2 == self.cubeA_geom_id:
+                touch_left_finger = True
+            if c.geom1 == self.cubeA_geom_id and c.geom2 in self.l_finger_geom_ids:
+                touch_left_finger = True
+            if c.geom1 in self.r_finger_geom_ids and c.geom2 == self.cubeA_geom_id:
+                touch_right_finger = True
+            if c.geom1 == self.cubeA_geom_id and c.geom2 in self.r_finger_geom_ids:
+                touch_right_finger = True
+            if c.geom1 == self.cubeA_geom_id and c.geom2 == self.cubeB_geom_id:
+                touch_cubeA_cubeB = True
+            if c.geom1 == self.cubeB_geom_id and c.geom2 == self.cubeA_geom_id:
+                touch_cubeA_cubeB = True
+
+        # additional grasping reward
+        if touch_left_finger and touch_right_finger:
+            r_reach += 0.25
+
+        # lifting is successful when the cube is above the table top
+        # by a margin
+        cubeA_height = cubeA_pos[2]
+        table_height = self.table_full_size[2]
+        cubeA_lifted = cubeA_height > table_height + 0.04
+        r_lift = 1.0 if cubeA_lifted else 0.0
+
+        # Aligning is successful when cubeA is right above cubeB
+        if cubeA_lifted:
+            horiz_dist = np.linalg.norm(
+                np.array(cubeA_pos[:2]) - np.array(cubeB_pos[:2])
+            )
+            r_lift += 0.5 * (1 - np.tanh(horiz_dist))
+
+        # stacking is successful when the block is lifted and
+        # the gripper is not holding the object
+        r_stack = 0
+        not_touching = not touch_left_finger and not touch_right_finger
+        if not_touching and r_lift > 0 and touch_cubeA_cubeB:
+            r_stack = 2.0
+
+        return (r_reach, r_lift, r_stack)
 
     def _get_observation(self):
         """
@@ -265,7 +331,6 @@ class SawyerLift(SawyerEnv):
                 contains a rendered depth map from the simulation
         """
         di = super()._get_observation()
-        # camera observations
         if self.use_camera_obs:
             camera_obs = self.sim.render(
                 camera_name=self.camera_name,
@@ -280,19 +345,38 @@ class SawyerLift(SawyerEnv):
 
         # low-level object information
         if self.use_object_obs:
-            # position and rotation of object
-            cube_pos = np.array(self.sim.data.body_xpos[self.cube_body_id])
-            cube_quat = convert_quat(
-                np.array(self.sim.data.body_xquat[self.cube_body_id]), to="xyzw"
+            # position and rotation of the first cube
+            cubeA_pos = np.array(self.sim.data.body_xpos[self.cubeA_body_id])
+            cubeA_quat = convert_quat(
+                np.array(self.sim.data.body_xquat[self.cubeA_body_id]), to="xyzw"
             )
-            di["cube_pos"] = cube_pos
-            di["cube_quat"] = cube_quat
+            di["cubeA_pos"] = cubeA_pos
+            di["cubeA_quat"] = cubeA_quat
 
+            # position and rotation of the second cube
+            cubeB_pos = np.array(self.sim.data.body_xpos[self.cubeB_body_id])
+            cubeB_quat = convert_quat(
+                np.array(self.sim.data.body_xquat[self.cubeB_body_id]), to="xyzw"
+            )
+            di["cubeB_pos"] = cubeB_pos
+            di["cubeB_quat"] = cubeB_quat
+
+            # relative positions between gripper and cubes
             gripper_site_pos = np.array(self.sim.data.site_xpos[self.eef_site_id])
-            di["gripper_to_cube"] = gripper_site_pos - cube_pos
+            di["gripper_to_cubeA"] = gripper_site_pos - cubeA_pos
+            di["gripper_to_cubeB"] = gripper_site_pos - cubeB_pos
+            di["cubeA_to_cubeB"] = cubeA_pos - cubeB_pos
 
             di["object-state"] = np.concatenate(
-                [cube_pos, cube_quat, di["gripper_to_cube"]]
+                [
+                    cubeA_pos,
+                    cubeA_quat,
+                    cubeB_pos,
+                    cubeB_quat,
+                    di["gripper_to_cubeA"],
+                    di["gripper_to_cubeB"],
+                    di["cubeA_to_cubeB"],
+                ]
             )
 
         return di
@@ -304,10 +388,8 @@ class SawyerLift(SawyerEnv):
         collision = False
         for contact in self.sim.data.contact[: self.sim.data.ncon]:
             if (
-                self.sim.model.geom_id2name(contact.geom1)
-                in self.gripper.contact_geoms()
-                or self.sim.model.geom_id2name(contact.geom2)
-                in self.gripper.contact_geoms()
+                self.sim.model.geom_id2name(contact.geom1) in self.finger_names
+                or self.sim.model.geom_id2name(contact.geom2) in self.finger_names
             ):
                 collision = True
                 break
@@ -317,31 +399,31 @@ class SawyerLift(SawyerEnv):
         """
         Returns True if task has been completed.
         """
-        cube_height = self.sim.data.body_xpos[self.cube_body_id][2]
-        table_height = self.table_full_size[2]
-
-        # cube is higher than the table top above a margin
-        return cube_height > table_height + 0.04
+        _, _, r_stack = self.staged_rewards()
+        return r_stack > 0
 
     def _gripper_visualization(self):
         """
         Do any needed visualization here. Overrides superclass implementations.
         """
 
-        # color the gripper site appropriately based on distance to cube
+        # color the gripper site appropriately based on distance to nearest object
         if self.gripper_visualization:
-            # get distance to cube
-            cube_site_id = self.sim.model.site_name2id("cube")
-            dist = np.sum(
-                np.square(
-                    self.sim.data.site_xpos[cube_site_id]
-                    - self.sim.data.get_site_xpos("grip_site")
-                )
+            # find closest object
+            square_dist = lambda x: np.sum(
+                np.square(x - self.sim.data.get_site_xpos("grip_site"))
             )
+            dists = np.array(list(map(square_dist, self.sim.data.site_xpos)))
+            dists[self.eef_site_id] = np.inf  # make sure we don't pick the same site
+            dists[self.eef_cylinder_id] = np.inf
+            ob_dists = dists[
+                self.object_site_ids
+            ]  # filter out object sites we care about
+            min_dist = np.min(ob_dists)
 
             # set RGBA for the EEF site here
             max_dist = 0.1
-            scaled = (1.0 - min(dist / max_dist, 1.)) ** 15
+            scaled = (1.0 - min(min_dist / max_dist, 1.)) ** 15
             rgba = np.zeros(4)
             rgba[0] = 1 - scaled
             rgba[1] = scaled

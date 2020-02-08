@@ -2,22 +2,22 @@ from collections import OrderedDict
 import numpy as np
 
 from robosuite.utils.transform_utils import convert_quat
-from robosuite.environments.sawyer import SawyerEnv
+from robosuite.environments.panda import PandaEnv
 
 from robosuite.models.arenas import TableArena
 from robosuite.models.objects import BoxObject
-from robosuite.models.robots import Sawyer
+from robosuite.models.robots import Panda
 from robosuite.models.tasks import TableTopTask, UniformRandomSampler
 
 
-class SawyerLift(SawyerEnv):
+class PandaLift(PandaEnv):
     """
-    This class corresponds to the lifting task for the Sawyer robot arm.
+    This class corresponds to the lifting task for the Panda robot arm.
     """
 
     def __init__(
         self,
-        gripper_type="TwoFingerGripper",
+        gripper_type="PandaGripper",
         table_full_size=(0.8, 0.8, 0.8),
         table_friction=(1., 5e-3, 1e-4),
         use_camera_obs=True,
@@ -149,7 +149,7 @@ class SawyerLift(SawyerEnv):
         if self.use_indicator_object:
             self.mujoco_arena.add_pos_indicator()
 
-        # The sawyer robot has a pedestal, we want to align it with the table
+        # The panda robot has a pedestal, we want to align it with the table
         self.mujoco_arena.set_origin([0.16 + self.table_full_size[0] / 2, 0, 0])
 
         # initialize objects of interest
@@ -195,7 +195,7 @@ class SawyerLift(SawyerEnv):
         self.model.place_objects()
 
         # reset joint positions
-        init_pos = np.array([-0.5538, -0.8208, 0.4155, 1.8409, -0.4955, 0.6482, 1.9628])
+        init_pos = self.mujoco_robot.init_qpos
         init_pos += np.random.randn(init_pos.shape[0]) * 0.02
         self.sim.data.qpos[self._ref_joint_pos_indexes] = np.array(init_pos)
 
