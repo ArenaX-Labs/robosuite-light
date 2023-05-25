@@ -4,7 +4,7 @@ for determining core functionality.
 
 To make sure global reference is maintained, should import these settings as:
 
-`import robosuite.utils.macros as macros`
+`import robosuite.macros as macros`
 """
 
 # Global Mujoco Simulation Parameters
@@ -31,3 +31,25 @@ IMAGE_CONVENTION = "opengl"  # Options are {"opengl", "opencv"}
 # In general, observations are concatenated together by modality. However, image observations are expensive memory-wise,
 # so we skip concatenating all images together by default, unless this flag is set to True
 CONCATENATE_IMAGES = False
+
+MUJOCO_GPU_RENDERING = True
+
+# Spacemouse settings. Used by SpaceMouse class in robosuite/devices/spacemouse.py
+SPACEMOUSE_VENDOR_ID = 9583
+SPACEMOUSE_PRODUCT_ID = 50734
+
+# If LOGGING LEVEL is set to None, the logger will be turned off
+CONSOLE_LOGGING_LEVEL = "WARN"
+# File logging is written to /tmp/robosuite_{time}_{pid}.log by default
+FILE_LOGGING_LEVEL = None
+
+# Override with macros from macros_private.py file, if it exists
+try:
+    from robosuite.macros_private import *
+except ImportError:
+    import robosuite
+    from robosuite.utils.log_utils import ROBOSUITE_DEFAULT_LOGGER
+
+    ROBOSUITE_DEFAULT_LOGGER.warn("No private macro file found!")
+    ROBOSUITE_DEFAULT_LOGGER.warn("It is recommended to use a private macro file")
+    ROBOSUITE_DEFAULT_LOGGER.warn("To setup, run: python {}/scripts/setup_macros.py".format(robosuite.__path__[0]))
