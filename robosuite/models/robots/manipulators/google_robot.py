@@ -4,7 +4,7 @@ from robosuite.models.robots.manipulators.manipulator_model import ManipulatorMo
 from robosuite.utils.mjcf_utils import xml_path_completion
 
 
-class Panda(ManipulatorModel):
+class GoogleRobot(ManipulatorModel):
     """
     Panda is a sensitive single-arm robot designed by Franka.
 
@@ -13,18 +13,22 @@ class Panda(ManipulatorModel):
     """
 
     def __init__(self, idn=0):
-        super().__init__(xml_path_completion("robots/panda/robot.xml"), idn=idn)
+        super().__init__(xml_path_completion("robots/google_robot/robot.xml"), idn=idn)
 
         # Set joint damping
-        self.set_joint_attribute(attrib="damping", values=np.array((0.1, 0.1, 0.1, 0.1, 0.1, 0.01, 0.01)))
+        # self.set_joint_attribute(attrib="damping", values=np.array((0.1, 0.1, 0.1, 0.1, 0.1, 0.01, 0.01)))
+
+    @property
+    def default_mobile_base(self):
+        return "NullMobileBase"
 
     @property
     def default_mount(self):
-        return "RethinkMount"
+        return "NullMount"
 
     @property
     def default_gripper(self):
-        return "PandaGripper"
+        return "GoogleGripper"
 
     @property
     def default_controller_config(self):
@@ -32,7 +36,7 @@ class Panda(ManipulatorModel):
 
     @property
     def init_qpos(self):
-        return np.array([0, np.pi / 16.0, 0.00, -np.pi / 2.0 - np.pi / 3.0, 0.00, np.pi - 0.2, np.pi / 4])
+        return np.array([0.0, 0.0, 0.0, 3 * np.pi / 8, 0.0, np.pi / 2, 0.0])
 
     @property
     def base_xpos_offset(self):
@@ -53,13 +57,3 @@ class Panda(ManipulatorModel):
     @property
     def arm_type(self):
         return "single"
-
-
-class PandaMobile(Panda):
-    """
-    Variant of Panda robot with mobile base. Currently serves as placeholder class.
-    """
-
-    @property
-    def default_mobile_base(self):
-        return "OmronMobileBase"
