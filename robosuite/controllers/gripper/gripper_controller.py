@@ -7,11 +7,11 @@ import numpy as np
 import robosuite.macros as macros
 
 
-class Controller(object, metaclass=abc.ABCMeta):
+class GripperController(object, metaclass=abc.ABCMeta):
     """
     General controller interface.
 
-    Requires reference to mujoco sim object, eef_name of specific robot, relevant joint_indexes to that robot, and
+    Requires reference to mujoco sim object, relevant joint_indexes to that robot, and
     whether an initial_joint is used for nullspace torques or not
 
     Args:
@@ -26,18 +26,15 @@ class Controller(object, metaclass=abc.ABCMeta):
             :`'qvel'`: list of indexes to relevant robot joint velocities
 
         actuator_range (2-tuple of array of float): 2-Tuple (low, high) representing the robot joint actuator range
-
-        lite_physics (bool): Whether to optimize for mujoco forward and step calls to reduce total simulation overhead.
-            This feature is set to False by default to preserve backward compatibility.
     """
 
     def __init__(
         self,
         sim,
-        eef_name,
         joint_indexes,
         actuator_range,
-        lite_physics=False,
+        part_name=None,
+        naming_prefix=None,
     ):
 
         # Actuator range
@@ -59,25 +56,17 @@ class Controller(object, metaclass=abc.ABCMeta):
         # mujoco simulator state
         self.sim = sim
         self.model_timestep = macros.SIMULATION_TIMESTEP
-        self.lite_physics = lite_physics
-        self.eef_name = eef_name
+        self.part_name = part_name
+        self.naming_prefix = naming_prefix
+
         self.joint_index = joint_indexes["joints"]
+        self.actuator_index = joint_indexes["actuators"]
         self.qpos_index = joint_indexes["qpos"]
         self.qvel_index = joint_indexes["qvel"]
 
         # robot states
-        self.ee_pos = None
-        self.ee_ori_mat = None
-        self.ee_pos_vel = None
-        self.ee_ori_vel = None
         self.joint_pos = None
         self.joint_vel = None
-
-        # dynamics and kinematics
-        self.J_pos = None
-        self.J_ori = None
-        self.J_full = None
-        self.mass_matrix = None
 
         # Joint dimension
         self.joint_dim = len(joint_indexes["joints"])
@@ -94,8 +83,7 @@ class Controller(object, metaclass=abc.ABCMeta):
         # Initialize controller by updating internal state and setting the initial joint, pos, and ori
         self.update()
         self.initial_joint = self.joint_pos
-        self.initial_ee_pos = self.ee_pos
-        self.initial_ee_ori_mat = self.ee_ori_mat
+        self.previous_qpos = None
 
     @abc.abstractmethod
     def run_controller(self):
@@ -141,45 +129,20 @@ class Controller(object, metaclass=abc.ABCMeta):
 
         # Only run update if self.new_update or force flag is set
         if self.new_update or force:
-            # no need to call sim.forward if using lite_physics
-            if self.lite_physics:
-                pass
-            else:
-                self.sim.forward()
-
-            self.ee_pos = np.array(self.sim.data.site_xpos[self.sim.model.site_name2id(self.eef_name)])
-            self.ee_ori_mat = np.array(
-                self.sim.data.site_xmat[self.sim.model.site_name2id(self.eef_name)].reshape([3, 3])
-            )
-            self.ee_pos_vel = np.array(self.sim.data.get_site_xvelp(self.eef_name))
-            self.ee_ori_vel = np.array(self.sim.data.get_site_xvelr(self.eef_name))
-
+            
             self.joint_pos = np.array(self.sim.data.qpos[self.qpos_index])
             self.joint_vel = np.array(self.sim.data.qvel[self.qvel_index])
-
-            self.J_pos = np.array(self.sim.data.get_site_jacp(self.eef_name).reshape((3, -1))[:, self.qvel_index])
-            self.J_ori = np.array(self.sim.data.get_site_jacr(self.eef_name).reshape((3, -1))[:, self.qvel_index])
-            self.J_full = np.array(np.vstack([self.J_pos, self.J_ori]))
-
-            mass_matrix = np.ndarray(shape=(self.sim.model.nv, self.sim.model.nv), dtype=np.float64, order="C")
-            mujoco.mj_fullM(self.sim.model._model, mass_matrix, self.sim.data.qM)
-            mass_matrix = np.reshape(mass_matrix, (len(self.sim.data.qvel), len(self.sim.data.qvel)))
-            self.mass_matrix = mass_matrix[self.qvel_index, :][:, self.qvel_index]
-
             # Clear self.new_update
             self.new_update = False
 
-    def update_base_pose(self, base_pos, base_ori):
+    def update_base_pose(self):
         """
         Optional function to implement in subclass controllers that will take in @base_pos and @base_ori and update
         internal configuration to account for changes in the respective states. Useful for controllers e.g. IK, which
         is based on pybullet and requires knowledge of simulator state deviations between pybullet and mujoco
 
-        Args:
-            base_pos (3-tuple): x,y,z position of robot base in mujoco world coordinates
-            base_ori (4-tuple): x,y,z,w orientation or robot base in mujoco world coordinates
         """
-        pass
+        raise NotImplementedError
 
     def update_initial_joints(self, initial_joints):
         """
@@ -193,8 +156,6 @@ class Controller(object, metaclass=abc.ABCMeta):
         """
         self.initial_joint = np.array(initial_joints)
         self.update(force=True)
-        self.initial_ee_pos = self.ee_pos
-        self.initial_ee_ori_mat = self.ee_ori_mat
 
     def clip_torques(self, torques):
         """

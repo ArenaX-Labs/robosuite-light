@@ -1,6 +1,6 @@
 import numpy as np
 
-from robosuite.controllers.base_controller import Controller
+from robosuite.controllers.controller import Controller
 
 
 class JointTorqueController(Controller):
@@ -77,6 +77,8 @@ class JointTorqueController(Controller):
             eef_name,
             joint_indexes,
             actuator_range,
+            part_name=kwargs.get("part_name", None),
+            naming_prefix=kwargs.get("naming_prefix", None),
         )
 
         # Control dimension
