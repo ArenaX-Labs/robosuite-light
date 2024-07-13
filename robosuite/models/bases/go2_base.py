@@ -4,7 +4,7 @@ from robosuite.models.bases.leg_base_model import LegBaseModel
 from robosuite.utils.mjcf_utils import xml_path_completion
 
 
-class Spot(LegBaseModel):
+class Go2(LegBaseModel):
     """
     Rethink's Generic Mount (Officially used on Baxter).
 
@@ -13,7 +13,7 @@ class Spot(LegBaseModel):
     """
 
     def __init__(self, idn=0):
-        super().__init__(xml_path_completion("robots/spot/robot.xml"), idn=idn)
+        super().__init__(xml_path_completion("robots/go2/robot.xml"), idn=idn)
 
     @property
     def top_offset(self):
@@ -28,7 +28,7 @@ class Spot(LegBaseModel):
         return np.array([0.0, 0.9, -1.8] * 4)
 
 
-class SpotFloating(LegBaseModel):
+class Go2Floating(LegBaseModel):
     """
     Rethink's Generic Mount (Officially used on Baxter).
 
@@ -37,7 +37,7 @@ class SpotFloating(LegBaseModel):
     """
 
     def __init__(self, idn=0):
-        super().__init__(xml_path_completion("robots/spot/robot.xml"), idn=idn)
+        super().__init__(xml_path_completion("robots/go2/robot.xml"), idn=idn)
 
         self._remove_joint_actuation("leg")
         self._remove_free_joint()
