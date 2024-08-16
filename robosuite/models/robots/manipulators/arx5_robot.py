@@ -4,9 +4,9 @@ from robosuite.models.robots.manipulators.manipulator_model import ManipulatorMo
 from robosuite.utils.mjcf_utils import xml_path_completion
 
 
-class UR5e(ManipulatorModel):
+class Arx5(ManipulatorModel):
     """
-    UR5e is a sleek and elegant new robot created by Universal Robots
+    Arx5 is a single-arm robot, typically for customizable mounting on quadruped.
 
     Args:
         idn (int or str): Number or some other unique identification string for this robot instance
@@ -15,7 +15,10 @@ class UR5e(ManipulatorModel):
     arms = ["right"]
 
     def __init__(self, idn=0):
-        super().__init__(xml_path_completion("robots/ur5e/robot.xml"), idn=idn)
+        super().__init__(xml_path_completion("robots/arx5/robot.xml"), idn=idn)
+
+        # Set joint damping
+        self.set_joint_attribute(attrib="damping", values=np.array((0.1, 0.1, 0.1, 0.1, 0.1, 0.01)))
 
     @property
     def default_base(self):
@@ -23,22 +26,22 @@ class UR5e(ManipulatorModel):
 
     @property
     def default_gripper(self):
-        return {"right": "Robotiq85Gripper"}
+        return {"right": "UMIGripper"}
 
     @property
     def default_controller_config(self):
-        return {"right": "default_ur5e"}
+        return {"right": "default_spot"}
 
     @property
     def init_qpos(self):
-        return np.array([-0.470, -1.735, 2.480, -2.275, -1.590, -1.991])
+        return np.array([0.0, 0.3, 0.7, -0.67, 0.0, 0.12])
 
     @property
     def base_xpos_offset(self):
         return {
             "bins": (-0.5, -0.1, 0),
             "empty": (-0.6, 0, 0),
-            "table": lambda table_length: (-0.16 - table_length / 2, 0, 0),
+            "table": lambda table_length: (-0.16 - 0.9 - table_length / 2, 0.0, 0.7),
         }
 
     @property
