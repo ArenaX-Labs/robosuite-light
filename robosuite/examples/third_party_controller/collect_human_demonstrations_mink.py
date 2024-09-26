@@ -13,44 +13,28 @@ from glob import glob
 from typing import List
 
 import h5py
+import mujoco
 import numpy as np
 
-import mujoco
 import robosuite as suite
-from robosuite.controllers import load_composite_controller_config
+import robosuite.examples.third_party_controller.mink_controller
 import robosuite.macros as macros
+from robosuite.controllers import load_composite_controller_config
+from robosuite.examples.third_party_controller.mink_controller import WholeBodyMinkIK
+from robosuite.scripts.collect_human_demonstrations import gather_demonstrations_as_hdf5, get_target, set_target
+from robosuite.utils import transform_utils
 from robosuite.utils.input_utils import input2action
 from robosuite.wrappers import DataCollectionWrapper, VisualizationWrapper
-from robosuite.utils import transform_utils
 
 """
 Command for running GR1 + mocap (only works for GR1 b/c of site_names assumption)
 
-python robosuite/scripts/collect_human_demonstrations.py --robot GR1FixedLowerBody --camera frontview --device keyboard --composite-controller WHOLE_BODY_IK --renderer mjviewer --use-mocap
+python robosuite/examples/third_party_controller/collect_human_demonstrations_mocap.py --environment Lift --robots GR1FixedLowerBody --device keyboard --camera frontview --custom-controller-config robosuite/examples/third_party_controller/default_mink_ik_gr1.json
 
 Need to Esc; Tab; Scroll to Group Enable, then press Group 2. Then, double click on the mocap cube and Ctrl+left or right click.
 
 """
 
-
-def set_target(sim, target_pos=None, target_mat=None, mocap_name: str = "target"):
-    mocap_id = sim.model.body(mocap_name).mocapid[0]
-    if target_pos is not None:
-        sim.data.mocap_pos[mocap_id] = target_pos
-    if target_mat is not None:
-        # convert mat to quat
-        target_quat = np.empty(4)
-        mujoco.mju_mat2Quat(target_quat, target_mat.reshape(9, 1))
-        sim.data.mocap_quat[mocap_id] = target_quat
-
-def get_target(sim, mocap_name: str = "target"):
-    mocap_id = sim.model.body(mocap_name).mocapid[0]
-    target_pos = np.copy(sim.data.mocap_pos[mocap_id])
-    target_quat = np.copy(sim.data.mocap_quat[mocap_id])
-    target_mat = np.empty(9)
-    mujoco.mju_quat2Mat(target_mat, target_quat)
-    target_mat = target_mat.reshape(3, 3)
-    return target_pos, target_mat
 
 def collect_human_trajectory(env, device, arm, env_configuration, end_effector: str = "right", use_mocap: bool = False):
     """
@@ -94,7 +78,11 @@ def collect_human_trajectory(env, device, arm, env_configuration, end_effector: 
 
         # Get the newest action
         input_action, grasp = input2action(
-            device=device, robot=active_robot, active_arm=arm, active_end_effector=end_effector, env_configuration=env_configuration
+            device=device,
+            robot=active_robot,
+            active_arm=arm,
+            active_end_effector=end_effector,
+            env_configuration=env_configuration,
         )
 
         # If action is none, then this a reset so we should break
@@ -107,12 +95,12 @@ def collect_human_trajectory(env, device, arm, env_configuration, end_effector: 
             if "GR1" in env.robots[0].name:
                 # "relative" actions by default for now
                 action_dict = {
-                    'gripper0_left_grip_site_pos': input_action[:3] * 0.1, 
-                    'gripper0_left_grip_site_axis_angle': input_action[3:6], 
-                    'gripper0_right_grip_site_pos': np.zeros(3), 
-                    'gripper0_right_grip_site_axis_angle': np.zeros(3), 
-                    'left_gripper': np.array([0.] *  env.robots[0].gripper["left"].dof), 
-                    'right_gripper': np.array([0.] *  env.robots[0].gripper["right"].dof)
+                    "robot0_l_eef_site_pos": input_action[:3] * 0.1,
+                    "robot0_l_eef_site_axis_angle": input_action[3:6],
+                    "robot0_r_eef_site_pos": np.zeros(3),
+                    "robot0_r_eef_site_axis_angle": np.zeros(3),
+                    "left_gripper": np.array([0.0] * env.robots[0].gripper["left"].dof),
+                    "right_gripper": np.array([0.0] * env.robots[0].gripper["right"].dof),
                 }
 
                 if use_mocap:
@@ -131,19 +119,23 @@ def collect_human_trajectory(env, device, arm, env_configuration, end_effector: 
                     right_axis_angle = transform_utils.quat2axisangle(right_quat_xyzw)
                     left_axis_angle = transform_utils.quat2axisangle(left_quat_xyzw)
 
-                    action_dict['gripper0_left_grip_site_pos'] = left_pos
-                    action_dict['gripper0_right_grip_site_pos'] = right_pos
-                    action_dict['gripper0_left_grip_site_axis_angle'] = left_axis_angle
-                    action_dict['gripper0_right_grip_site_axis_angle'] = right_axis_angle
+                    action_dict["robot0_l_eef_site_pos"] = left_pos
+                    action_dict["robot0_r_eef_site_pos"] = right_pos
+                    action_dict["robot0_l_eef_site_axis_angle"] = left_axis_angle
+                    action_dict["robot0_r_eef_site_axis_angle"] = right_axis_angle
+                    action_dict["gripper0_left_grip_site_pos"] = left_pos
+                    action_dict["gripper0_right_grip_site_pos"] = right_pos
+                    action_dict["gripper0_left_grip_site_axis_angle"] = left_axis_angle
+                    action_dict["gripper0_right_grip_site_axis_angle"] = right_axis_angle
 
             elif "Tiago" in env.robots[0].name:
                 action_dict = {
-                    'right_gripper': np.array([0.]), 
-                    'left_gripper': np.array([0.]), 
-                    'gripper0_left_grip_site_pos': np.array([-0.4189254 ,  0.22745755,  1.0597]) + input_action[:3] * 0.05, 
-                    'gripper0_left_grip_site_axis_angle': np.array([-2.1356914 ,  2.50323857, -2.45929076]), 
-                    'gripper0_right_grip_site_pos': np.array([-0.41931295, -0.22706004,  1.0566]), 
-                    'gripper0_right_grip_site_axis_angle': np.array([-1.26839518,  1.15421975,  0.99332174]),
+                    "right_gripper": np.array([0.0]),
+                    "left_gripper": np.array([0.0]),
+                    "robot0_l_eef_site_pos": np.array([-0.4189254, 0.22745755, 1.0597]) + input_action[:3] * 0.05,
+                    "robot0_l_eef_site_axis_angle": np.array([-2.1356914, 2.50323857, -2.45929076]),
+                    "robot0_r_eef_site_pos": np.array([-0.41931295, -0.22706004, 1.0566]),
+                    "robot0_r_eef_site_axis_angle": np.array([-1.26839518, 1.15421975, 0.99332174]),
                 }
             else:
                 action_dict = {}
@@ -173,7 +165,9 @@ def collect_human_trajectory(env, device, arm, env_configuration, end_effector: 
                     env.robots[0].enable_parts(base=False, right=True, left=True, torso=False)
         else:
             arm_actions = input_action
-            action = env.robots[0].create_action_vector({arm: arm_actions[:-1], f"{end_effector}_gripper": arm_actions[-1:]})
+            action = env.robots[0].create_action_vector(
+                {arm: arm_actions[:-1], f"{end_effector}_gripper": arm_actions[-1:]}
+            )
 
         env.step(action)
         env.render()
@@ -195,97 +189,6 @@ def collect_human_trajectory(env, device, arm, env_configuration, end_effector: 
     env.close()
 
 
-def gather_demonstrations_as_hdf5(directory, out_dir, env_info):
-    """
-    Gathers the demonstrations saved in @directory into a
-    single hdf5 file.
-
-    The strucure of the hdf5 file is as follows.
-
-    data (group)
-        date (attribute) - date of collection
-        time (attribute) - time of collection
-        repository_version (attribute) - repository version used during collection
-        env (attribute) - environment name on which demos were collected
-
-        demo1 (group) - every demonstration has a group
-            model_file (attribute) - model xml string for demonstration
-            states (dataset) - flattened mujoco states
-            actions (dataset) - actions applied during demonstration
-
-        demo2 (group)
-        ...
-
-    Args:
-        directory (str): Path to the directory containing raw demonstrations.
-        out_dir (str): Path to where to store the hdf5 file.
-        env_info (str): JSON-encoded string containing environment information,
-            including controller and robot info
-    """
-
-    hdf5_path = os.path.join(out_dir, "demo.hdf5")
-    f = h5py.File(hdf5_path, "w")
-
-    # store some metadata in the attributes of one group
-    grp = f.create_group("data")
-
-    num_eps = 0
-    env_name = None  # will get populated at some point
-
-    for ep_directory in os.listdir(directory):
-
-        state_paths = os.path.join(directory, ep_directory, "state_*.npz")
-        states = []
-        actions = []
-        success = False
-
-        for state_file in sorted(glob(state_paths)):
-            dic = np.load(state_file, allow_pickle=True)
-            env_name = str(dic["env"])
-
-            states.extend(dic["states"])
-            for ai in dic["action_infos"]:
-                actions.append(ai["actions"])
-            success = success or dic["successful"]
-
-        if len(states) == 0:
-            continue
-
-        # Add only the successful demonstration to dataset
-        if success:
-            print("Demonstration is successful and has been saved")
-            # Delete the last state. This is because when the DataCollector wrapper
-            # recorded the states and actions, the states were recorded AFTER playing that action,
-            # so we end up with an extra state at the end.
-            del states[-1]
-            assert len(states) == len(actions)
-
-            num_eps += 1
-            ep_data_grp = grp.create_group("demo_{}".format(num_eps))
-
-            # store model xml as an attribute
-            xml_path = os.path.join(directory, ep_directory, "model.xml")
-            with open(xml_path, "r") as f:
-                xml_str = f.read()
-            ep_data_grp.attrs["model_file"] = xml_str
-
-            # write datasets for states and actions
-            ep_data_grp.create_dataset("states", data=np.array(states))
-            ep_data_grp.create_dataset("actions", data=np.array(actions))
-        else:
-            print("Demonstration is unsuccessful and has NOT been saved")
-
-    # write dataset attributes (metadata)
-    now = datetime.datetime.now()
-    grp.attrs["date"] = "{}-{}-{}".format(now.month, now.day, now.year)
-    grp.attrs["time"] = "{}:{}:{}".format(now.hour, now.minute, now.second)
-    grp.attrs["repository_version"] = suite.__version__
-    grp.attrs["env"] = env_name
-    grp.attrs["env_info"] = env_info
-
-    f.close()
-
-
 if __name__ == "__main__":
     # Arguments
     parser = argparse.ArgumentParser()
@@ -301,11 +204,20 @@ if __name__ == "__main__":
     )
     parser.add_argument("--arm", type=str, default="right", help="Which arm to control (eg bimanual) 'right' or 'left'")
     parser.add_argument("--camera", type=str, default="agentview", help="Which camera to use for collecting demos")
-    # parser.add_argument(
-    #     "--controller", type=str, default="OSC_POSE", help="Choice of controller. Can be 'IK_POSE' or 'OSC_POSE'"
-    # )
     parser.add_argument(
-        "--composite-controller", type=str, default=None, help="Choice of composite controller. Can be 'NONE' or 'WHOLE_BODY_IK'"
+        "--controller", type=str, default="OSC_POSE", help="Choice of controller. Can be 'IK_POSE' or 'OSC_POSE'"
+    )
+    parser.add_argument(
+        "--composite-controller",
+        type=str,
+        default=None,
+        help="Choice of composite controller. Can be 'NONE' or 'WHOLE_BODY_IK'",
+    )
+    parser.add_argument(
+        "--custom-controller-config",
+        type=str,
+        default=None,
+        help="Choice of composite controller. Can be 'NONE' or 'WHOLE_BODY_IK'",
     )
     parser.add_argument("--device", type=str, default="keyboard")
     parser.add_argument("--pos-sensitivity", type=float, default=1.0, help="How much to scale position user inputs")
@@ -313,26 +225,21 @@ if __name__ == "__main__":
     parser.add_argument(
         "--renderer",
         type=str,
-        default="mujoco",
+        default="mjviewer",
         help="Use the Nvisii viewer (Nvisii), OpenCV viewer (mujoco), or Mujoco's builtin interactive viewer (mjviewer)",
     )
-    # add use mocap option
-    parser.add_argument(
-        "--use-mocap", action="store_true"
-    )
     args = parser.parse_args()
-    if args.use_mocap:
-        assert args.renderer == "mjviewer", "Mocap is only supported with the mjviewer renderer"
 
     # Get controller config
-    composite_controller_config = load_composite_controller_config(default_controller=args.composite_controller, robot=args.robots[0])
+    controller_config = load_composite_controller_config(
+        custom_fpath=args.custom_controller_config, default_controller=args.composite_controller, robot=args.robots[0]
+    )
 
     # Create argument configuration
     config = {
         "env_name": args.environment,
         "robots": args.robots,
-        # "controller_configs": controller_config,
-        "composite_controller_configs": composite_controller_config,
+        "controller_configs": controller_config,
     }
 
     # Check if we're using a multi-armed environment and use env_configuration argument if so
@@ -366,11 +273,12 @@ if __name__ == "__main__":
     if args.device == "keyboard":
         from robosuite.devices import Keyboard
 
-        device = Keyboard(env, pos_sensitivity=args.pos_sensitivity, rot_sensitivity=args.rot_sensitivity)
+        device = Keyboard(env=env, pos_sensitivity=args.pos_sensitivity, rot_sensitivity=args.rot_sensitivity)
     elif args.device == "spacemouse":
         from robosuite.devices import SpaceMouse
 
-        device = SpaceMouse(env, pos_sensitivity=args.pos_sensitivity, rot_sensitivity=args.rot_sensitivity)
+        device = SpaceMouse(env=env, pos_sensitivity=args.pos_sensitivity, rot_sensitivity=args.rot_sensitivity)
+
     else:
         raise Exception("Invalid device choice: choose either 'keyboard' or 'spacemouse'.")
 
@@ -381,5 +289,5 @@ if __name__ == "__main__":
 
     # collect demonstrations
     while True:
-        collect_human_trajectory(env, device, args.arm, args.config, end_effector="right", use_mocap=args.use_mocap)
+        collect_human_trajectory(env, device, args.arm, args.config, use_mocap=True)
         gather_demonstrations_as_hdf5(tmp_directory, new_dir, env_info)
