@@ -46,9 +46,12 @@ if __name__ == "__main__":
         ignore_done=True,
         use_camera_obs=False,
         control_freq=20,
+        renderer="mujoco",
     )
     env.reset()
-    env.viewer.set_camera(camera_id=0)
+
+    camera_name = ["agentview", "birdview"]
+    env.viewer.set_camera(camera_name=camera_name)
     for robot in env.robots:
         if isinstance(robot, MobileRobot):
             robot.enable_parts(legs=False, base=False)
