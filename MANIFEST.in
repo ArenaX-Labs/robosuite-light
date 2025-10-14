@@ -1,4 +1,5 @@
 recursive-include robosuite/controllers/config/ *
 recursive-include robosuite/demos *
-recursive-include robosuite/models/assets/ *
 recursive-include robosuite/scripts *
+prune robosuite/models/assets
+include robosuite/models/assets/base.xml
