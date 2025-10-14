@@ -27,7 +27,7 @@ from robosuite.utils.log_utils import ROBOSUITE_DEFAULT_LOGGER
 try:
     import robosuite_models
 except:
-    ROBOSUITE_DEFAULT_LOGGER.warning(
+    ROBOSUITE_DEFAULT_LOGGER.debug(
         "Could not import robosuite_models. Some robots may not be available. "
         "If you want to use these robots, please install robosuite_models from "
         "source (https://github.com/ARISE-Initiative/robosuite_models) or through pip install."
@@ -37,7 +37,7 @@ try:
     from robosuite.examples.third_party_controller.mink_controller import WholeBodyMinkIK
 
 except:
-    ROBOSUITE_DEFAULT_LOGGER.warning(
+    ROBOSUITE_DEFAULT_LOGGER.debug(
         "Could not load the mink-based whole-body IK. Make sure you install related import properly, otherwise you will not be able to use the default IK controller setting for GR1 robot."
     )
 
