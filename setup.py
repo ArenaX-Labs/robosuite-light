@@ -21,7 +21,7 @@ setup(
         "numba>=0.49.1",
         "scipy>=1.2.3",
         "mujoco>=3.3.0",
-        "mink==0.0.5",
+        "mink",
         "qpsolvers[quadprog]>=4.3.1",
         "Pillow",
         "opencv-python",
