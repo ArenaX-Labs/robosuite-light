@@ -25,7 +25,6 @@ setup(
         "qpsolvers[quadprog]>=4.3.1",
         "Pillow",
         "opencv-python",
-        "pynput",
         "termcolor",
         "pytest",
         "tqdm",
