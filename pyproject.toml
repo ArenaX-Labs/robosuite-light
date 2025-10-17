@@ -1,5 +1,5 @@
 [project]
-name = "robosuite-light"
+name = "robosuite"
 version = "0.0.1"
 description = "A lightweight version of Robosuite library"
 readme = "README.md"
